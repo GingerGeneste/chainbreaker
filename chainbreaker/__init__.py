@@ -126,7 +126,7 @@ class Chainbreaker(object):
 
         return entries
 
-    # Returns a list of InterertPasswordRecord objects extracted from the Keychain
+    # Returns a list of InternetPasswordRecord objects extracted from the Keychain
     def dump_internet_passwords(self):
         entries = []
         try:
@@ -186,7 +186,6 @@ class Chainbreaker(object):
             for i, private_key_offset in enumerate(private_key_list, 1):
                 entries.append(
                     self._get_private_key_record(private_key_offset))
-
         except KeyError:
             self.logger.warning('[!] Private Key Table is not available')
         return entries
@@ -347,7 +346,7 @@ class Chainbreaker(object):
         else:
             return _FOUR_CHAR_CODE(self.kc_buffer[base_addr + pcol:base_addr + pcol + 4]).Value
 
-    # Get an lv from the keychain buffer
+    # Get a lv from the keychain buffer
     def _get_lv(self, base_addr, pcol):
         if pcol <= 0:
             return ''
@@ -375,11 +374,9 @@ class Chainbreaker(object):
         if len(plain) == 0:
             return '', ''
 
-        # now we handle the unwrapping. we need to take the first 32 bytes,
-        # and reverse them.
-        revplain = bytes(reversed(plain[0:32]))
-        # now the real key gets found. */
-        plain = Chainbreaker._kcdecrypt(self.db_key, iv, revplain)
+        # reverse the plaintext before decrypting again
+        plain = bytes(reversed(plain))
+        plain = Chainbreaker._kcdecrypt(self.db_key, iv, plain)
 
         keyname = plain[:12]  # Copied Buffer when user click on right and copy a key on Keychain Access
         keyblob = plain[12:]
@@ -451,7 +448,7 @@ class Chainbreaker(object):
         )
 
     def _get_private_key_record(self, record_offset):
-        record = self._get_key_record(self._get_table_offset(CSSM_DL_DB_RECORD_PRIVATE_KEY), record_offset)
+        record = self._get_key_record(CSSM_DL_DB_RECORD_PRIVATE_KEY, record_offset)
 
         if not self.db_key:
             keyname = privatekey = Chainbreaker.KEYCHAIN_LOCKED_SIGNATURE
@@ -474,7 +471,7 @@ class Chainbreaker(object):
         )
 
     def _get_public_key_record(self, record_offset):
-        record = self._get_key_record(self._get_table_offset(CSSM_DL_DB_RECORD_PUBLIC_KEY), record_offset)
+        record = self._get_key_record(CSSM_DL_DB_RECORD_PUBLIC_KEY, record_offset)
         return self.PublicKeyRecord(
             print_name=record[0],
             label=record[1],
@@ -512,7 +509,7 @@ class Chainbreaker(object):
                 self._get_int(base_addr, record_meta.EffectiveKeySize & 0xFFFFFFFE),
                 self._get_int(base_addr, record_meta.Extractable & 0xFFFFFFFE),
                 STD_APPLE_ADDIN_MODULE[
-                    str(self._get_lv(base_addr, record_meta.KeyCreator & 0xFFFFFFFE)).split('\x00')[0]],
+                    self._get_lv(base_addr, record_meta.KeyCreator & 0xFFFFFFFE).decode('utf-8').split('\x00')[0]],
                 iv,
                 key]
 
@@ -605,6 +602,10 @@ class Chainbreaker(object):
             dbkey=dbkey)
 
     def _get_base_address(self, table_name, offset=None):
+        if table_name == 23972:
+            table_name = 16
+        if table_name == 30912:
+            table_name = 16
         base_address = _APPL_DB_HEADER.STRUCT.size + self._get_table_offset(table_name)
         if offset:
             base_address += offset
@@ -687,7 +688,7 @@ class Chainbreaker(object):
         if len(data) % Chainbreaker.BLOCKSIZE != 0:
             return b''
 
-        cipher = DES3.new(key, DES3.MODE_CBC, iv=bytearray(iv))
+        cipher = DES3.new(key, DES3.MODE_CBC, IV=iv)
 
         plain = cipher.decrypt(data)
 
@@ -759,7 +760,7 @@ class Chainbreaker(object):
 
         def write_to_disk(self, output_directory):
             # self.exportable contains the content we should write to disk. If it isn't implemented we can't
-            # then writing to disk via this method isn't currently supported.
+            # then can write to disk via this method isn't currently supported.
             try:
                 export_content = self.exportable
             except NotImplementedError:
@@ -863,7 +864,7 @@ class Chainbreaker(object):
 
         @property
         def file_name(self):
-            return "".join(x for x in self.PrintName if x.isalnum())
+            return "PublicKey"
 
         @property
         def file_ext(self):
@@ -916,7 +917,7 @@ class Chainbreaker(object):
 
         @property
         def file_name(self):
-            return "".join(x for x in self.PrintName if x.isalnum())
+            return "PrivateKey"
 
         @property
         def file_ext(self):
@@ -1160,7 +1161,7 @@ class Chainbreaker(object):
 def check_input_args(args):
     # Check various input arguments
     args = args_control.args_prompt_input(args)
-    args.output = args_control.set_output_dir(args)
+    args.output = args_control.set_output_dir(args, logger)
     args = args_control.set_all_options_true(args)
 
     # Make sure we're actually doing something, exit if we're not.
@@ -1181,8 +1182,15 @@ def main():
     logging.info(f'Version - {__version__}')
 
     # Calculate the MD5 and SHA256 of the input keychain file.
-    keychain_md5 = md5(args.keychain.encode('utf-8')).hexdigest()
-    keychain_sha256 = sha256(args.keychain.encode('utf-8')).hexdigest()
+    try:
+        tmp = open(args.keychain, 'rb')
+        buf = tmp.read()
+        tmp.close()
+    except:
+        logging.critical(f'Failed to open the keychain file')
+        exit(1)
+    keychain_md5 = md5(buf).hexdigest()
+    keychain_sha256 = sha256(buf).hexdigest()
 
     # Print out some summary info before we actually start doing any work.
     summary_output = results.summary(args, keychain_md5, keychain_sha256)
